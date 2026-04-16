@@ -1,0 +1,315 @@
+//! opx-probe — broadcast media file inspector
+//!
+//! Usage:
+//!   opx-probe <file> [--json] [--house <format>]
+//!
+//! Options:
+//!   --json            Output JSON instead of human-readable text
+//!   --house <format>  Run preflight against house format.
+//!                     Formats: 1080p50 (default), 1080p25, 1080p2997, 1080p30,
+//!                              1080i50, 1080i5994, 720p50, 720p25
+//!
+//! Exit codes:
+//!   0  Clean (probe succeeded; preflight passed if --house given)
+//!   1  Preflight failures
+//!   2  Probe error (file not found, unreadable, not a media file)
+
+use std::process;
+use op_probe::{probe_file, preflight};
+use op_common::HouseFormat;
+use serde_json::json;
+
+fn codec_name(id: u32) -> &'static str {
+    // FFmpeg AVCodecID constants — stable across versions relevant to broadcast
+    match id {
+        12  => "MPEG-2 Video",
+        27  => "H.264 / AVC",
+        173 => "H.265 / HEVC",
+        150 => "Apple ProRes",
+        176 => "Avid DNxHD",
+        177 => "Avid DNxHR",
+        13  => "MPEG-4 Part 2",
+        7   => "DV",
+        11  => "MPEG-1 Video",
+        // Audio
+        86016 => "PCM s16le",
+        86017 => "PCM s16be",
+        86018 => "PCM u16le",
+        86020 => "PCM s24le",
+        86021 => "PCM s24be",
+        86038 => "PCM s32le",
+        69632 => "AAC",
+        69633 => "MP3",
+        69648 => "AC-3",
+        69649 => "EAC-3",
+        73728 => "Dolby E",
+        _     => "unknown",
+    }
+}
+
+fn format_duration(ns: u64) -> String {
+    let total_s = ns / 1_000_000_000;
+    let h = total_s / 3600;
+    let m = (total_s % 3600) / 60;
+    let s = total_s % 60;
+    let ms = (ns % 1_000_000_000) / 1_000_000;
+    if h > 0 {
+        format!("{h}:{m:02}:{s:02}.{ms:03}")
+    } else {
+        format!("{m}:{s:02}.{ms:03}")
+    }
+}
+
+fn fmt_rate(num: u32, den: u32) -> String {
+    if den == 1 {
+        format!("{num} fps")
+    } else {
+        // Show common names for well-known rates
+        match (num, den) {
+            (24000, 1001) => "23.976 fps".to_string(),
+            (30000, 1001) => "29.97 fps".to_string(),
+            (60000, 1001) => "59.94 fps".to_string(),
+            _ => format!("{}/{} fps", num, den),
+        }
+    }
+}
+
+fn parse_house(s: &str) -> Option<HouseFormat> {
+    match s {
+        "1080p50"   => Some(HouseFormat::hd_1080p50()),
+        "1080p25"   => Some(HouseFormat::hd_1080p25()),
+        "1080p2997" => Some(HouseFormat::hd_1080p2997()),
+        "1080p30"   => Some(HouseFormat::hd_1080p30()),
+        "1080p24"   => Some(HouseFormat::hd_1080p24()),
+        "1080p2398" => Some(HouseFormat::hd_1080p2398()),
+        "1080i50"   => Some(HouseFormat::hd_1080i50()),
+        "1080i5994" => Some(HouseFormat::hd_1080i5994()),
+        "720p50"    => Some(HouseFormat::hd_720p50()),
+        "720p25"    => Some(HouseFormat::hd_720p25()),
+        _ => None,
+    }
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+
+    if args.len() < 2 || args[1] == "--help" || args[1] == "-h" {
+        eprintln!("opx-probe — Karhu Ltd broadcast media file inspector");
+        eprintln!();
+        eprintln!("Usage: opx-probe <file> [--json] [--house <format>]");
+        eprintln!();
+        eprintln!("Options:");
+        eprintln!("  --json            JSON output");
+        eprintln!("  --house <format>  Preflight against house format");
+        eprintln!();
+        eprintln!("House formats: 1080p50 (default for --house), 1080p25, 1080p2997,");
+        eprintln!("               1080p30, 1080p24, 1080p2398, 1080i50, 1080i5994,");
+        eprintln!("               720p50, 720p25");
+        eprintln!();
+        eprintln!("Exit codes: 0 = clean, 1 = preflight failures, 2 = probe error");
+        process::exit(0);
+    }
+
+    let mut file_path: Option<&str> = None;
+    let mut json_out  = false;
+    let mut house_fmt: Option<HouseFormat> = None;
+    let mut i = 1usize;
+
+    while i < args.len() {
+        match args[i].as_str() {
+            "--json" => { json_out = true; }
+            "--house" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("opx-probe: --house requires a format argument");
+                    process::exit(2);
+                }
+                match parse_house(&args[i]) {
+                    Some(hf) => house_fmt = Some(hf),
+                    None => {
+                        eprintln!("opx-probe: unknown house format '{}'. See --help.", args[i]);
+                        process::exit(2);
+                    }
+                }
+            }
+            arg if !arg.starts_with('-') => {
+                file_path = Some(arg);
+            }
+            arg => {
+                eprintln!("opx-probe: unknown option '{}'. See --help.", arg);
+                process::exit(2);
+            }
+        }
+        i += 1;
+    }
+
+    let path = match file_path {
+        Some(p) => p,
+        None => {
+            eprintln!("opx-probe: no file specified. See --help.");
+            process::exit(2);
+        }
+    };
+
+    // ── Probe ─────────────────────────────────────────────────────────────────
+    let probe = match probe_file(path) {
+        Ok(p)  => p,
+        Err(e) => {
+            if json_out {
+                let out = json!({ "error": e.to_string(), "path": path });
+                println!("{}", serde_json::to_string_pretty(&out).unwrap());
+            } else {
+                eprintln!("opx-probe: ERROR — {e}");
+            }
+            process::exit(2);
+        }
+    };
+
+    // ── Preflight (optional) ──────────────────────────────────────────────────
+    let preflight_result = house_fmt.as_ref().map(|hf| preflight(&probe, hf));
+
+    // ── Output ────────────────────────────────────────────────────────────────
+    if json_out {
+        let video = probe.video.as_ref().map(|v| json!({
+            "width":      v.width,
+            "height":     v.height,
+            "frame_rate": { "num": v.frame_rate.0, "den": v.frame_rate.1 },
+            "frame_rate_label": fmt_rate(v.frame_rate.0, v.frame_rate.1),
+            "codec_id":   v.codec_id,
+            "codec_name": codec_name(v.codec_id),
+            "duration_ns": v.duration_ns,
+            "duration":   format_duration(v.duration_ns),
+            "nb_frames":  v.nb_frames,
+        }));
+
+        let audio = probe.audio.as_ref().map(|a| json!({
+            "sample_rate": a.sample_rate,
+            "channels":    a.channels,
+            "codec_id":    a.codec_id,
+            "codec_name":  codec_name(a.codec_id),
+            "duration_ns": a.duration_ns,
+            "duration":    format_duration(a.duration_ns),
+        }));
+
+        let mxf = probe.container.as_ref().map(|m| json!({
+            "audio_streams":  m.audio_streams.len(),
+            "has_sidecar":    m.sidecar.is_some(),
+            "sidecar": m.sidecar.as_ref().map(|s| json!({
+                "programme_title":    s.programme_title,
+                "audio_track_layout": s.audio_track_layout,
+                "afd":                s.afd,
+                "subtitle_present":   s.subtitle_present,
+                "rights_expiry":      s.rights_expiry,
+            })),
+        }));
+
+        let pf = preflight_result.as_ref().map(|r| json!({
+            "passed":   r.passed(),
+            "failures": r.failures.iter().map(|f| f.to_string()).collect::<Vec<_>>(),
+        }));
+
+        let out = json!({
+            "path":         probe.path,
+            "duration_ns":  probe.duration_ns,
+            "duration":     format_duration(probe.duration_ns),
+            "has_edit_list": probe.has_edit_list,
+            "video":        video,
+            "audio":        audio,
+            "mxf":          mxf,
+            "preflight":    pf,
+        });
+
+        println!("{}", serde_json::to_string_pretty(&out).unwrap());
+
+    } else {
+        // Human-readable output
+        println!("opx-probe  {}", probe.path);
+        println!("{}", "─".repeat(72));
+
+        println!("Duration   {}", format_duration(probe.duration_ns));
+
+        if probe.has_edit_list {
+            println!("Edit list  ⚠  detected — Rytmi v1 will reject this file");
+        }
+
+        if let Some(v) = &probe.video {
+            println!();
+            println!("Video");
+            println!("  Codec      {}  (id {})", codec_name(v.codec_id), v.codec_id);
+            println!("  Frame rate {}", fmt_rate(v.frame_rate.0, v.frame_rate.1));
+            println!("  Resolution {}×{}", v.width, v.height);
+            println!("  Duration   {}", format_duration(v.duration_ns));
+            if let Some(n) = v.nb_frames {
+                println!("  Frames     {n}");
+            }
+        } else {
+            println!();
+            println!("Video      ✗  no video stream");
+        }
+
+        if let Some(a) = &probe.audio {
+            println!();
+            println!("Audio");
+            println!("  Codec      {}  (id {})", codec_name(a.codec_id), a.codec_id);
+            println!("  Sample rate {} Hz", a.sample_rate);
+            println!("  Channels   {}", a.channels);
+            println!("  Duration   {}", format_duration(a.duration_ns));
+        } else {
+            println!();
+            println!("Audio      ✗  no audio stream");
+        }
+
+        if let Some(m) = &probe.container {
+            println!();
+            println!("MXF");
+            println!("  Audio streams  {}", m.audio_streams.len());
+            if let Some(s) = &m.sidecar {
+                println!("  AS-11 sidecar  present");
+                if let Some(title) = &s.programme_title {
+                    if !title.is_empty() {
+                        println!("  Programme      {title}");
+                    }
+                }
+                if let Some(layout) = &s.audio_track_layout {
+                    if !layout.is_empty() {
+                        println!("  Audio layout   {layout}");
+                    }
+                }
+                if let Some(afd) = &s.afd {
+                    println!("  AFD            {afd}");
+                }
+                if s.subtitle_present {
+                    println!("  Subtitles      present");
+                }
+                if let Some(expiry) = &s.rights_expiry {
+                    println!("  Rights expiry  {expiry}");
+                }
+            } else {
+                println!("  AS-11 sidecar  not found");
+            }
+        }
+
+        if let Some(pf) = &preflight_result {
+            println!();
+            println!("{}", "─".repeat(72));
+            if pf.passed() {
+                println!("Preflight  ✓  PASSED");
+            } else {
+                println!("Preflight  ✗  FAILED ({} issue{})",
+                    pf.failures.len(),
+                    if pf.failures.len() == 1 { "" } else { "s" });
+                for f in &pf.failures {
+                    println!("  • {f}");
+                }
+            }
+        }
+
+        println!();
+    }
+
+    // Exit code
+    match preflight_result {
+        Some(pf) if !pf.passed() => process::exit(1),
+        _ => process::exit(0),
+    }
+}
