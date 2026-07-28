@@ -17,10 +17,12 @@ Binary-only release. No source published.
 
 ```
 opx-probe <file> [--json] [--house <format>]
+opx-probe --version
 
 Options:
   --json            JSON output
   --house <format>  Preflight against house format
+  --version, -V     Print version and exit
 
 House formats:
   1080p50   1080p25   1080p2997   1080p30
@@ -57,13 +59,13 @@ opx-probe  programme_ep3.mxf
 Duration   48:22.080
 
 Video
-  Codec      MPEG-2 Video  (id 12)
+  Codec      MPEG-2 Video  (id 2)
   Frame rate 25 fps
   Resolution 1920×1080
   Frames     72552
 
 Audio
-  Codec      PCM s24le  (id 86020)
+  Codec      PCM s24le  (id 65548)
   Sample rate 48000 Hz
   Channels   2
 
