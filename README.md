@@ -10,8 +10,8 @@ Binary-only release. No source published.
 
 | Platform | Requirements |
 |----------|-------------|
-| Linux x86_64 | Ubuntu 22.04+ · `sudo apt install ffmpeg` |
-| Windows x86_64 | Windows 10+ · FFmpeg DLLs bundled |
+| Linux x86_64 | Ubuntu 24.04 LTS · `sudo apt install ffmpeg` — FFmpeg 6.x, `libavformat.so.60`. 22.04 ships FFmpeg 4.4 and 26.04 ships FFmpeg 8; neither is supported. Other distributions need FFmpeg 6.x from their own sources |
+| Windows x86_64 | Windows 10 (tested Jul 2026) · FFmpeg DLLs bundled |
 
 ## Usage
 
