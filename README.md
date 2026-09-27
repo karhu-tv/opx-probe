@@ -21,13 +21,17 @@ opx-probe --version
 
 Options:
   --json            JSON output
-  --house <format>  Preflight against house format
+  --house <format>  Preflight against a target format
   --version, -V     Print version and exit
 
-House formats:
+Target formats (--house):
   1080p50   1080p25   1080p2997   1080p30
   1080p24   1080p2398 1080i50     1080i5994
   720p50    720p25
+
+Preflight takes only the frame rate from the target format. Resolution and
+scan type are not compared, so 1080p50 and 720p50 give the same verdict, as do
+1080p25, 1080i50 and 720p25 (0.2.0).
 
 Exit codes:
   0  Clean (preflight passed if --house given)
@@ -41,7 +45,7 @@ Exit codes:
 # Inspect a file
 opx-probe programme.mxf
 
-# Preflight against house format
+# Preflight against a target format (frame rate, sample rate, start offset, VFR — not resolution or scan)
 opx-probe clip.mp4 --house 1080p50
 
 # JSON output
@@ -53,31 +57,39 @@ opx-probe clip.mp4 --house 1080p50 && echo "OK" || echo "FAIL"
 
 ## Sample output
 
+Captured 2026-09-27 with opx-probe 0.2.0 on a 10 s DNxHD bars file, quoted verbatim.
+The earlier sample here was not the tool's output (it lacked the per-stream Duration
+lines every report prints) and was withdrawn.
+
 ```
-opx-probe  programme_ep3.mxf
+$ opx-probe bars_dnxhd_1080p25_10s.mxf --house 1080p25
+opx-probe  bars_dnxhd_1080p25_10s.mxf
 ────────────────────────────────────────────────────────────────────────
-Duration   48:22.080
+Duration   0:10.000
 
 Video
-  Codec      MPEG-2 Video  (id 2)
+  Codec      Avid DNxHD/DNxHR  (id 99)
   Frame rate 25 fps
   Resolution 1920×1080
-  Frames     72552
+  Duration   0:10.000
 
 Audio
   Codec      PCM s24le  (id 65548)
   Sample rate 48000 Hz
-  Channels   2
+  Channels   1
+  Duration   0:10.000
 
 MXF
-  Audio streams  4
-  AS-11 sidecar  present
-  Programme      Series Title S01E03
-  Audio layout   stereo_and_dual_mono
+  Audio streams  1
+  AS-11 sidecar  not found
 
 ────────────────────────────────────────────────────────────────────────
 Preflight  ✓  PASSED
 ```
+
+A note on the start-offset check: it flags any stream that does not start at time
+zero and reports it as an edit list. MPEG-TS has no edit lists, but its streams
+rarely start at zero, so all 9 `.ts` files we tried on 2026-09-27 tripped it.
 
 ---
 
