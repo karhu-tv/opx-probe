@@ -2,7 +2,7 @@
 
 Fast media file inspector for broadcast engineers.
 
-Binary-only release. No source published.
+Binary-only release. Source code is not published. One exception, stated so nobody has to find it: from 16 Apr to 28 Jul 2026 this repository carried one source file of the command-line front-end, committed by mistake under `.github/workflows/`. It was removed from the tree on 28 Jul 2026. It remains in the repository's history and in the “Source code” archive of the v0.1.0 release. Stated 29 Sep 2026.
 
 ## Download
 
@@ -11,7 +11,22 @@ Binary-only release. No source published.
 | Platform | Requirements |
 |----------|-------------|
 | Linux x86_64 | Ubuntu 24.04 LTS · `sudo apt install ffmpeg` — FFmpeg 6.x, `libavformat.so.60`. 22.04 ships FFmpeg 4.4 and 26.04 ships FFmpeg 8; neither is supported. Other distributions need FFmpeg 6.x from their own sources |
-| Windows x86_64 | Windows 10 (tested Jul 2026) · FFmpeg DLLs bundled |
+
+**Windows x86_64: withdrawn.** The Windows zip bundled FFmpeg 6.1.1 DLLs (gyan.dev full_build-shared), licensed GPL version 3 or later. The zip did not include that licence's text or an offer of the FFmpeg source, which the licence requires. Windows downloads withdrawn 29 Sep 2026 for this reason. The Linux build does not bundle FFmpeg.
+
+## Known issues in 0.2.0
+
+*Known issues added 29 Sep 2026.* These items are also listed on the [latest release](https://github.com/karhu-tv/opx-probe/releases/latest) and on [karhu.tv](https://karhu.tv/tools.html#opx-probe-issues).
+
+- **A false “will reject” line.** The line `Rytmi v1 will reject this file` is wrong: Rytmi does not reject such a file. The line prints whenever any stream starts at a non-zero time: every MPEG-TS file we tried, and the Matroska and FLV files we tried on 29 Sep 2026, including a fresh MKV encode, which `--house` also fails.
+- **Several files: only the last is probed.** Given several files, 0.2.0 probes only the last and ignores the others without a message, so `opx-probe *.mxf --house 1080i50` can print PASSED and exit 0 over files it never opened. Pass one file per run: `for f in *.mxf; do opx-probe "$f" --house 1080i50 || echo "FAIL $f"; done`.
+- **VFR.** VFR is flagged only when FFmpeg reports no frame rate at all. A variable-rate file that declares a nominal rate, such as a typical phone or screen capture or a stream whose rate changes part-way, passes preflight.
+- **Truncated files.** Preflight reads the container header, not the media. A truncated file whose header survives passes: on 29 Sep 2026 the first 23 % of a faststart MP4 reported its full 10 s duration and PASSED.
+- **Edit lists.** The start-offset check does not read MP4/MOV edit lists. A stream-copy trim that carries a real edit list passes, reports `has_edit_list: false`, and counts the frames its edit list discards.
+- **MXF sidecar.** The sidecar is found by file name only: `<name>.xml`, `<name>_shim.xml`, or a `shim.xml` in the same folder, so one `shim.xml` is reported against every MXF beside it. Any well-formed XML counts as a sidecar. AFD, subtitles and rights expiry are read from field names that are not AS-11's, and a missing subtitles field reads as false. AS-11 metadata embedded in the MXF is not read.
+- **Exit code 101.** opx-probe ends in a Rust panic with exit code 101, outside the documented 0/1/2, when a file name is not valid UTF-8, and intermittently when stdout is closed early (`| head`).
+- **Publisher name.** `--help` names a limited company that is not the publisher, and the archive's README.txt runs the trading name together as one word. The publisher is Bear Media Services LTD, trading as Karhu TV. The `--help` text is fixed in source; the published archive is unchanged.
+- **Supported systems.** The README.txt inside the Linux archive says "Ubuntu 24.04+". Of Ubuntu releases, only 24.04 LTS is supported, as this page states.
 
 ## Usage
 
@@ -89,7 +104,8 @@ Preflight  ✓  PASSED
 
 A note on the start-offset check: it flags any stream that does not start at time
 zero and reports it as an edit list. MPEG-TS has no edit lists, but its streams
-rarely start at zero, so all 9 `.ts` files we tried on 2026-09-27 tripped it.
+rarely start at zero, so all 9 `.ts` files we tried on 27 Sep 2026 tripped it, as
+did the Matroska and FLV files we tried on 29 Sep 2026.
 
 ---
 
